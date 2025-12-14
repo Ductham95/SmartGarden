@@ -11,7 +11,7 @@
 // --- CẤU HÌNH THINGSBOARD ---
 // Thay đổi TOKEN bằng "Access Token" của thiết bị trên ThingsBoard
 #define TB_SERVER "eu.thingsboard.cloud" // Hoặc IP server ThingsBoard của bạn (VD: 192.168.1.100)
-#define TB_TOKEN "nSFoTxXKtTbbjknjUU9Z"
+#define TB_TOKEN "50FjeUVAMhq00TRZhBfw"
 #define TB_PORT 1883
 
 // --- CẤU HÌNH PHẦN CỨNG (GPIO ESP32) ---
