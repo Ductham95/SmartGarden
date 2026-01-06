@@ -46,6 +46,11 @@ unsigned long pumpStartTime = 0;
 unsigned long pumpDuration = 10000;
 bool autoPump = true; // Mặc định bật chế độ tự động
 
+// Lịch tưới tự động
+String wateringSchedulesJson = "[]"; // Lưu danh sách lịch tưới từ ThingsBoard
+unsigned long lastScheduleCheck = 0;
+const unsigned long SCHEDULE_CHECK_INTERVAL = 60000; // Kiểm tra mỗi 60 giây
+
 // Trạng thái Lỗi
 int typeError = 0;
 bool sendNotiLowPower = true;
@@ -70,6 +75,7 @@ float checkLevelWater();
 float checkLevelBattery();
 void readSensorsAndUpload();
 void reconnect();
+void checkWateringSchedule();
 
 // --- HÀM CALLBACK MQTT (XỬ LÝ LỆNH TỪ SERVER) ---
 void onMessage(char *topic, byte *payload, unsigned int length)
@@ -144,6 +150,12 @@ void onMessage(char *topic, byte *payload, unsigned int length)
       Serial.print("Cap nhat heightWaterTank: ");
       Serial.println(heightTankWater);
     }
+    if (doc.containsKey("wateringSchedules"))
+    {
+      wateringSchedulesJson = doc["wateringSchedules"].as<String>();
+      Serial.print("Cap nhat wateringSchedules: ");
+      Serial.println(wateringSchedulesJson);
+    }
   }
 }
 
@@ -214,7 +226,7 @@ void reconnect()
       client.subscribe("v1/devices/me/attributes");
 
       // 3. Gửi yêu cầu lấy cấu hình hiện tại từ Server (Shared Attributes)
-      client.publish("v1/devices/me/attributes/request/1", "{\"clientKeys\":\"pumpDuration,autoPump,heightWaterTank\"}");
+      client.publish("v1/devices/me/attributes/request/1", "{\"clientKeys\":\"pumpDuration,autoPump,heightWaterTank,wateringSchedules\"}");
     }
     else
     {
@@ -256,6 +268,7 @@ void loop()
 
   timeClient.update();
   checkPump();
+  checkWateringSchedule(); // Kiểm tra lịch tưới
 
   unsigned long currentMillis = millis();
   if (currentMillis - lastUpdateData >= 2000)
@@ -433,5 +446,67 @@ void ledBug(int type)
   else
   {
     digitalWrite(LED_BUG, LOW);
+  }
+}// --- HÀM KIỂM TRA LỊCH TƯỚI TỰ ĐỘNG ---
+void checkWateringSchedule()
+{
+  unsigned long currentMillis = millis();
+  if (currentMillis - lastScheduleCheck < SCHEDULE_CHECK_INTERVAL)
+    return;
+  
+  lastScheduleCheck = currentMillis;
+  
+  // Nếu không có lịch hoặc bơm đang chạy thủ công thì bỏ qua
+  if (wateringSchedulesJson.length() <= 2 || manualOverride)
+    return;
+  
+  // Parse JSON lịch tưới
+  DynamicJsonDocument schedulesDoc(2048);
+  DeserializationError error = deserializeJson(schedulesDoc, wateringSchedulesJson);
+  
+  if (error) {
+    Serial.print("Loi parse wateringSchedules: ");
+    Serial.println(error.c_str());
+    return;
+  }
+  
+  JsonArray schedules = schedulesDoc.as<JsonArray>();
+  
+  // Lấy thời gian hiện tại
+  int currentHour = timeClient.getHours();
+  int currentMinute = timeClient.getMinutes();
+  int currentDay = timeClient.getDay(); // 0=Sunday, 1=Monday, ..., 6=Saturday
+  
+  // Chuyển đổi: 0=Sunday -> 7, 1=Monday -> 1, ...
+  if (currentDay == 0) currentDay = 7;
+  
+  // Kiểm tra từng lịch
+  for (JsonObject schedule : schedules) {
+    bool isEnabled = schedule["isEnabled"] | false;
+    if (!isEnabled) continue;
+    
+    int hour = schedule["hour"] | 0;
+    int minute = schedule["minute"] | 0;
+    JsonArray daysOfWeek = schedule["daysOfWeek"];
+    int duration = schedule["duration"] | 10000;
+    
+    // Kiểm tra xem hôm nay có trong danh sách ngày không
+    bool isDayMatch = false;
+    for (int day : daysOfWeek) {
+      if (day == currentDay) {
+        isDayMatch = true;
+        break;
+      }
+    }
+    
+    if (!isDayMatch) continue;
+    
+    // Kiểm tra xem có đúng giờ không (trong khoảng 1 phút)
+    if (currentHour == hour && currentMinute == minute) {
+      Serial.println("Khop lich tuoi! Bat bom...");
+      pumpDuration = duration; // Sử dụng thời lượng từ lịch
+      turnOnPump("Schedule: " + schedule["name"].as<String>());
+      break; // Chỉ bật bơm cho lịch đầu tiên khớp
+    }
   }
 }
